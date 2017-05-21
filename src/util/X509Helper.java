@@ -155,36 +155,36 @@ public class X509Helper {
             keyStore.load(fileInputStream, password.toCharArray());
             fileInputStream.close();
             
-            X509Certificate certificate = (X509Certificate) keyStore.getCertificate(name);
-            Key key = keyStore.getKey(name, password.toCharArray());
-            if(certificate != null && key != null) {
-                Certificate certificates[] = {certificate};
-                if(!getKeyStoreInstance().containsAlias(name)) {
-                    getKeyStoreInstance().setKeyEntry(name, key, Constants.keyStorePassword.toCharArray(), certificates);
-                    storeKeyStore();
-                    return true;
-                }
+            Certificate certificates[] = keyStore.getCertificateChain(Constants.keyPairName);
+            Key key = keyStore.getKey(Constants.keyPairName, password.toCharArray());
+            
+            if(!getKeyStoreInstance().containsAlias(name)) {
+                getKeyStoreInstance().setKeyEntry(name, key, Constants.keyStorePassword.toCharArray(), certificates);
+                storeKeyStore();
+                return true;
             }
+            
         } catch (Exception ex) {
             Logger.getLogger(X509Helper.class.getName()).log(Level.SEVERE, null, ex);
         }
         return false;
     }
     
-    public boolean exportKeypair(String string, String string1, String string2) {
+    public boolean exportKeypair(String name, String file_name, String password) {
         try {
-            ProtectionParameter pp = new KeyStore.PasswordProtection(Constants.keyStorePassword.toCharArray());
-            KeyStore ks = KeyStore.getInstance("pkcs12");
-            ks.load(null,null);
-            PrivateKeyEntry entry = (PrivateKeyEntry) getKeyStoreInstance().getEntry(string, pp);
-            Certificate certs[] = {entry.getCertificateChain()[0]};
-            PrivateKey pKey = entry.getPrivateKey();
-            ks.setKeyEntry(string, pKey, string2.toCharArray(), certs);
-            OutputStream writeStream;
+            ProtectionParameter protectionParameter = new KeyStore.PasswordProtection(Constants.keyStorePassword.toCharArray());
+            KeyStore keyStore = KeyStore.getInstance("pkcs12");
+            keyStore.load(null,null);
             
-            writeStream = new FileOutputStream(string1+".p12");
-            ks.store(writeStream, string2.toCharArray());
-            writeStream.close();
+            PrivateKeyEntry privateKeyEntry = (PrivateKeyEntry) getKeyStoreInstance().getEntry(name, protectionParameter);
+            Certificate certificates[] = {privateKeyEntry.getCertificateChain()[0]};
+            
+            PrivateKey privateKey = privateKeyEntry.getPrivateKey();
+            keyStore.setKeyEntry(Constants.keyPairName, privateKey, password.toCharArray(), certificates);
+            
+            FileOutputStream fileOutputStream = new FileOutputStream(file_name+".p12");
+            keyStore.store(fileOutputStream, password.toCharArray());
+            fileOutputStream.close();
             
         } catch (Exception ex) {
             Logger.getLogger(X509Helper.class.getName()).log(Level.SEVERE, null, ex);

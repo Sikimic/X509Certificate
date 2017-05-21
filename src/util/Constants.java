@@ -14,5 +14,6 @@ import x509.v3.GuiV3;
 public class Constants {
     public static String keyStoreName = "keystore";
     public static String keyStorePassword = "qwe123";
+    public static String keyPairName = "new_keypar";
     public static GuiV3 access;
 }
