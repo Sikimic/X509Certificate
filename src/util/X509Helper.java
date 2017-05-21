@@ -19,15 +19,18 @@ import java.security.Key;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.KeyStore;
+import java.security.KeyStore.PasswordProtection;
 import java.security.KeyStore.PrivateKeyEntry;
 import java.security.KeyStore.ProtectionParameter;
 import java.security.KeyStoreException;
+import java.security.NoSuchAlgorithmException;
 import java.security.NoSuchProviderException;
 import java.security.Principal;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.Security;
 import java.security.SignatureException;
+import java.security.UnrecoverableEntryException;
 import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
@@ -44,8 +47,11 @@ import org.bouncycastle.asn1.x509.Extension;
 import org.bouncycastle.asn1.x509.GeneralName;
 import org.bouncycastle.asn1.x509.GeneralNames;
 import org.bouncycastle.asn1.x509.SubjectKeyIdentifier;
+import org.bouncycastle.jce.PKCS10CertificationRequest;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.bouncycastle.util.encoders.Base64;
 import org.bouncycastle.x509.X509V3CertificateGenerator;
+import sun.security.x509.X509CertImpl;
 /**
  *
  * @author sikimic
@@ -54,7 +60,7 @@ public class X509Helper {
     
     private static KeyStore keyStoreInstance = null;
     private static X509Helper X509Instance = null;
-    
+        
     private X509Helper () {
         Security.addProvider(new BouncyCastleProvider());
     }
@@ -111,6 +117,7 @@ public class X509Helper {
             } else {
               certificate = (X509Certificate) certificates[0];
             }
+            Constants.selectedKeyPair = name;
             
             return displayCertificate(certificate);
         } catch (KeyStoreException ex) {
@@ -135,10 +142,10 @@ public class X509Helper {
         return false;
     }
     
-    public boolean removeKeypair(String string) {
+    public boolean removeKeypair(String name) {
         try {
-            if( getKeyStoreInstance().containsAlias(string)) {
-                getKeyStoreInstance().deleteEntry(string);
+            if( getKeyStoreInstance().containsAlias(name)) {
+                getKeyStoreInstance().deleteEntry(name);
                 storeKeyStore();
             }
             return true;
@@ -192,7 +199,23 @@ public class X509Helper {
         return false;
     }
     
-    public boolean signCertificate(String string, String string1) {
+    public boolean signCertificate(String issuer, String algorithm) {
+        try {
+            ProtectionParameter protectionParameter = new PasswordProtection(Constants.keyStorePassword.toCharArray());
+            PrivateKeyEntry issuerEntry = (PrivateKeyEntry) getKeyStoreInstance().getEntry(issuer, protectionParameter);
+            PrivateKeyEntry subjectEntry = (PrivateKeyEntry) getKeyStoreInstance().getEntry(Constants.selectedKeyPair, protectionParameter);
+            
+            X509Certificate certificate = signCertificate(subjectEntry, issuerEntry);
+            Certificate [] certificates = {certificate};
+            
+            getKeyStoreInstance().deleteEntry(Constants.selectedKeyPair);
+            getKeyStoreInstance().setKeyEntry(Constants.selectedKeyPair, subjectEntry.getPrivateKey(), Constants.keyStorePassword.toCharArray(), certificates);
+            storeKeyStore();
+            
+            return true;
+        } catch (Exception ex) {
+            Logger.getLogger(X509Helper.class.getName()).log(Level.SEVERE, null, ex);
+        } 
         return false;
     }
     
@@ -204,23 +227,70 @@ public class X509Helper {
         return false;
     }
     
-    public String getIssuer(String string) {
+    public String getIssuer(String name) {
+        try {
+            ProtectionParameter protectionParameter = new KeyStore.PasswordProtection(Constants.keyStorePassword.toCharArray());
+            PrivateKeyEntry privateKeyEntry = (PrivateKeyEntry) getKeyStoreInstance().getEntry(name, protectionParameter);
+            X509Certificate certificate = (X509Certificate) privateKeyEntry.getCertificate();
+            
+            return certificate.getIssuerDN().toString();
+        } catch (KeyStoreException | NoSuchAlgorithmException | UnrecoverableEntryException ex) {
+            Logger.getLogger(X509Helper.class.getName()).log(Level.SEVERE, null, ex);
+        } 
         return null;
     }
     
-    public String getIssuerPublicKeyAlgorithm(String string) {
+    public String getIssuerPublicKeyAlgorithm(String name) {
+        try {
+            X509Certificate certificate = (X509Certificate) getKeyStoreInstance().getCertificate(name);
+            return certificate.getSigAlgName();
+        } catch (KeyStoreException ex) {
+            Logger.getLogger(X509Helper.class.getName()).log(Level.SEVERE, null, ex);
+        }
         return null;
     }
     
-    public int getRSAKeyLength(String string) {
+    public int getRSAKeyLength(String name) {
         return 0;
     }
 
-    public List<String> getIssuers(String string) {
+    public List<String> getIssuers(String name) {
+        try {
+          List<String> result = new ArrayList();
+          Enumeration<String> aliases = getKeyStoreInstance().aliases();
+          while (aliases.hasMoreElements()) {
+              String alias = aliases.nextElement();
+              if(alias.compareTo(name) != 0) {
+                X509Certificate certificate = (X509Certificate) getKeyStoreInstance().getCertificate(alias);
+                if(certificate.getBasicConstraints() >= 0) {
+                  result.add(alias);
+                } 
+              }
+          }
+          
+          if(result.isEmpty()) return null;
+          return result;
+        } catch (Exception ex) {
+          Logger.getLogger(X509Helper.class.getName()).log(Level.SEVERE, null, ex);
+        }
         return null;
     }
     
-    public boolean generateCSR(String string) {
+    public boolean generateCSR(String name) {
+        try {
+            if(getKeyStoreInstance().containsAlias(name)) {
+                ProtectionParameter protectionParameter = new PasswordProtection(Constants.keyStorePassword.toCharArray());
+                PrivateKeyEntry privateKeyEntry = (PrivateKeyEntry) getKeyStoreInstance().getEntry(name, protectionParameter);
+                X509Certificate certificate = (X509Certificate) privateKeyEntry.getCertificate();
+                PrivateKey privateKey = privateKeyEntry.getPrivateKey();
+                PKCS10CertificationRequest pkcs10Request = new PKCS10CertificationRequest("SHA1withRSA", certificate.getSubjectX500Principal(), certificate.getPublicKey(), null, privateKey);
+                String base64PKCS10 = new String(Base64.encode(pkcs10Request.getEncoded()));
+                
+                return true;
+            }
+        } catch (Exception ex) {
+            Logger.getLogger(X509Helper.class.getName()).log(Level.SEVERE, null, ex);
+        }
         return false;
     }
 
@@ -295,6 +365,27 @@ public class X509Helper {
             Logger.getLogger(X509Helper.class.getName()).log(Level.SEVERE, null, ex);
         }
         return -1;
-    }    
+    }
+
+    private X509Certificate signCertificate(KeyStore.PrivateKeyEntry subjectEntry, KeyStore.PrivateKeyEntry issuerEntry) throws Exception {
+        
+        X509Certificate subjectCert = (X509Certificate) subjectEntry.getCertificate();
+        X509Certificate issuerCert = (X509Certificate) issuerEntry.getCertificate();
+
+        Principal subjectDN = subjectCert.getSubjectDN();
+        LdapName ldapName = new LdapName(subjectDN.toString());
+        Constants.access.setSubjectCountry(ldapName.getRdn(0).getValue().toString());
+        Constants.access.setSubjectState(ldapName.getRdn(1).getValue().toString());
+        Constants.access.setSubjectLocality(ldapName.getRdn(2).getValue().toString());
+        Constants.access.setSubjectOrganization(ldapName.getRdn(3).getValue().toString());
+        Constants.access.setSubjectOrganizationUnit(ldapName.getRdn(4).getValue().toString());
+        Constants.access.setSubjectCommonName(ldapName.getRdn(5).getValue().toString());
+        
+        //GET EXTENSIONS AND GENERATE CERTIFICATE
+        
+        KeyPair keyPair = new KeyPair(subjectCert.getPublicKey(), issuerEntry.getPrivateKey());
+        
+        return generateCertificate( keyPair, false, issuerCert.getSubjectDN());
+    }
     
 }

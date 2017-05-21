@@ -15,5 +15,6 @@ public class Constants {
     public static String keyStoreName = "keystore";
     public static String keyStorePassword = "qwe123";
     public static String keyPairName = "new_keypar";
+    public static String selectedKeyPair;
     public static GuiV3 access;
 }
