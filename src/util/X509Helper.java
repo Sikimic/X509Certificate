@@ -15,9 +15,12 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.math.BigInteger;
 import java.security.InvalidKeyException;
+import java.security.Key;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.KeyStore;
+import java.security.KeyStore.PrivateKeyEntry;
+import java.security.KeyStore.ProtectionParameter;
 import java.security.KeyStoreException;
 import java.security.NoSuchProviderException;
 import java.security.Principal;
@@ -77,9 +80,10 @@ public class X509Helper {
      public Enumeration<String> loadLocalKeystore(){
         try {
             KeyStore keyStore = getKeyStoreInstance();
-            InputStream readStream = new FileInputStream(Constants.keyStoreName);
-            keyStore.load(readStream, Constants.keyStorePassword.toCharArray());
-            readStream.close();
+            FileInputStream fileInputStream = new FileInputStream(Constants.keyStoreName);
+            keyStore.load(fileInputStream, Constants.keyStorePassword.toCharArray());
+            fileInputStream.close();
+            
             return keyStore.aliases();
         }  catch (Exception e) {
             Logger.getLogger(X509Helper.class.getName()).log(Level.SEVERE, null, e);
@@ -144,11 +148,47 @@ public class X509Helper {
         return false;
     }
     
-    public boolean importKeypair(String string, String string1, String string2) {
+    public boolean importKeypair(String name, String file_name, String password) {
+        try {
+            KeyStore keyStore = KeyStore.getInstance("pkcs12");
+            FileInputStream fileInputStream = new FileInputStream(file_name);
+            keyStore.load(fileInputStream, password.toCharArray());
+            fileInputStream.close();
+            
+            X509Certificate certificate = (X509Certificate) keyStore.getCertificate(name);
+            Key key = keyStore.getKey(name, password.toCharArray());
+            if(certificate != null && key != null) {
+                Certificate certificates[] = {certificate};
+                if(!getKeyStoreInstance().containsAlias(name)) {
+                    getKeyStoreInstance().setKeyEntry(name, key, Constants.keyStorePassword.toCharArray(), certificates);
+                    storeKeyStore();
+                    return true;
+                }
+            }
+        } catch (Exception ex) {
+            Logger.getLogger(X509Helper.class.getName()).log(Level.SEVERE, null, ex);
+        }
         return false;
     }
     
     public boolean exportKeypair(String string, String string1, String string2) {
+        try {
+            ProtectionParameter pp = new KeyStore.PasswordProtection(Constants.keyStorePassword.toCharArray());
+            KeyStore ks = KeyStore.getInstance("pkcs12");
+            ks.load(null,null);
+            PrivateKeyEntry entry = (PrivateKeyEntry) getKeyStoreInstance().getEntry(string, pp);
+            Certificate certs[] = {entry.getCertificateChain()[0]};
+            PrivateKey pKey = entry.getPrivateKey();
+            ks.setKeyEntry(string, pKey, string2.toCharArray(), certs);
+            OutputStream writeStream;
+            
+            writeStream = new FileOutputStream(string1+".p12");
+            ks.store(writeStream, string2.toCharArray());
+            writeStream.close();
+            
+        } catch (Exception ex) {
+            Logger.getLogger(X509Helper.class.getName()).log(Level.SEVERE, null, ex);
+        }
         return false;
     }
     
