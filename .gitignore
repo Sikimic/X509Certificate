@@ -1,0 +1,5 @@
+.DS_STORE
+dist/
+build/
+build.xml
+nbproject/
