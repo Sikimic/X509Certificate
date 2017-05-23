@@ -163,6 +163,7 @@ public class X509Helper {
             fileInputStream.close();
             
             Certificate certificates[] = keyStore.getCertificateChain(Constants.keyPairName);
+            X509Certificate certificate = (X509Certificate) certificates[0];
             Key key = keyStore.getKey(Constants.keyPairName, password.toCharArray());
             
             if(!getKeyStoreInstance().containsAlias(name)) {
@@ -184,7 +185,7 @@ public class X509Helper {
             keyStore.load(null,null);
             
             PrivateKeyEntry privateKeyEntry = (PrivateKeyEntry) getKeyStoreInstance().getEntry(name, protectionParameter);
-            Certificate certificates[] = {privateKeyEntry.getCertificateChain()[0]};
+            Certificate certificates[] = privateKeyEntry.getCertificateChain();
             
             PrivateKey privateKey = privateKeyEntry.getPrivateKey();
             keyStore.setKeyEntry(Constants.keyPairName, privateKey, password.toCharArray(), certificates);
@@ -341,12 +342,22 @@ public class X509Helper {
             //SUBJECT FIELDS
             Principal subjectDN = certificate.getSubjectDN();
             LdapName ldapName = new LdapName(subjectDN.toString());
-            Constants.access.setSubjectCountry(ldapName.getRdn(0).getValue().toString());
-            Constants.access.setSubjectState(ldapName.getRdn(1).getValue().toString());
-            Constants.access.setSubjectLocality(ldapName.getRdn(2).getValue().toString());
-            Constants.access.setSubjectOrganization(ldapName.getRdn(3).getValue().toString());
-            Constants.access.setSubjectOrganizationUnit(ldapName.getRdn(4).getValue().toString());
-            Constants.access.setSubjectCommonName(ldapName.getRdn(5).getValue().toString());
+            
+            Enumeration<String> ldaps = ldapName.getAll();
+            
+            while(ldaps.hasMoreElements()) {
+                String s = ldaps.nextElement();
+                String[] strs = s.split("=");
+                switch(strs[0]) {
+                    case ("C"): Constants.access.setSubjectCountry(strs[1]); break;
+                    case ("ST"): Constants.access.setSubjectState(strs[1]); break;
+                    case ("L"): Constants.access.setSubjectLocality(strs[1]); break;
+                    case ("O"): Constants.access.setSubjectOrganization(strs[1]); break;
+                    case ("OU"): Constants.access.setSubjectOrganizationUnit(strs[1]); break;
+                    case ("CN"): Constants.access.setSubjectCommonName(strs[1]); break;                   
+                }
+            }
+            
             Constants.access.setVersion((certificate.getVersion())==3?2:1);
             Constants.access.setSerialNumber(certificate.getSerialNumber().toString());
             Constants.access.setNotBefore(certificate.getNotBefore());
