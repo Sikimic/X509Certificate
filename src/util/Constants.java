@@ -5,6 +5,7 @@
  */
 package util;
 
+import org.bouncycastle.jce.PKCS10CertificationRequest;
 import x509.v3.GuiV3;
 
 /**
@@ -17,4 +18,5 @@ public class Constants {
     public static String keyPairName = "new_keypar";
     public static String selectedKeyPair;
     public static GuiV3 access;
+    public static PKCS10CertificationRequest CSR;
 }

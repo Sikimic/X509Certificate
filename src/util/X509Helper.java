@@ -32,9 +32,13 @@ import java.security.Security;
 import java.security.SignatureException;
 import java.security.UnrecoverableEntryException;
 import java.security.cert.Certificate;
+import java.security.cert.CertificateException;
+import java.security.cert.CertificateParsingException;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Enumeration;
+import java.util.Iterator;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -42,15 +46,20 @@ import javax.naming.InvalidNameException;
 import javax.naming.ldap.LdapName;
 import javax.naming.ldap.Rdn;
 import javax.security.auth.x500.X500Principal;
+import org.bouncycastle.asn1.ASN1Encodable;
+import org.bouncycastle.asn1.ASN1InputStream;
+import org.bouncycastle.asn1.DEROctetString;
 import org.bouncycastle.asn1.x509.AuthorityKeyIdentifier;
 import org.bouncycastle.asn1.x509.Extension;
 import org.bouncycastle.asn1.x509.GeneralName;
 import org.bouncycastle.asn1.x509.GeneralNames;
 import org.bouncycastle.asn1.x509.SubjectKeyIdentifier;
+import org.bouncycastle.asn1.x509.X509Extensions;
 import org.bouncycastle.jce.PKCS10CertificationRequest;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.util.encoders.Base64;
 import org.bouncycastle.x509.X509V3CertificateGenerator;
+import sun.security.x509.InhibitAnyPolicyExtension;
 import sun.security.x509.X509CertImpl;
 /**
  *
@@ -75,8 +84,9 @@ public class X509Helper {
     public static KeyStore getKeyStoreInstance() {
         if (keyStoreInstance == null) {
             try {
-                keyStoreInstance = KeyStore.getInstance("BKS", "BC");  
-            } catch (KeyStoreException | NoSuchProviderException e) {
+                keyStoreInstance = KeyStore.getInstance("BKS", "BC");
+                keyStoreInstance.load(null,null);
+            } catch (IOException | KeyStoreException | NoSuchAlgorithmException | NoSuchProviderException | CertificateException e) {
                 Logger.getLogger(X509Helper.class.getName()).log(Level.SEVERE, null, e);
             } 
         }
@@ -163,7 +173,6 @@ public class X509Helper {
             fileInputStream.close();
             
             Certificate certificates[] = keyStore.getCertificateChain(Constants.keyPairName);
-            X509Certificate certificate = (X509Certificate) certificates[0];
             Key key = keyStore.getKey(Constants.keyPairName, password.toCharArray());
             
             if(!getKeyStoreInstance().containsAlias(name)) {
@@ -284,8 +293,9 @@ public class X509Helper {
                 PrivateKeyEntry privateKeyEntry = (PrivateKeyEntry) getKeyStoreInstance().getEntry(name, protectionParameter);
                 X509Certificate certificate = (X509Certificate) privateKeyEntry.getCertificate();
                 PrivateKey privateKey = privateKeyEntry.getPrivateKey();
-                PKCS10CertificationRequest pkcs10Request = new PKCS10CertificationRequest("SHA1withRSA", certificate.getSubjectX500Principal(), certificate.getPublicKey(), null, privateKey);
-                String base64PKCS10 = new String(Base64.encode(pkcs10Request.getEncoded()));
+                String algorithm = certificate.getSigAlgName().contains("RSA") ? "SHA1withRSA" : certificate.getSigAlgName();
+                PKCS10CertificationRequest pkcs10Request = new PKCS10CertificationRequest(algorithm, certificate.getSubjectX500Principal(), certificate.getPublicKey(), null, privateKey);
+                Constants.CSR = pkcs10Request;
                 
                 return true;
             }
@@ -316,9 +326,40 @@ public class X509Helper {
             certGen.setSignatureAlgorithm(Constants.access.getPublicKeySignatureAlgorithm());
             
             //TODO:SET EXTENSIONS
+              
+            //KEY USAGE
+//            if(Constants.access.isCritical(2)) {
+//                List<GeneralName> names = new ArrayList();
+//                for (Boolean bool : Constants.access.getKeyUsage()) {
+//                    GeneralName temp = new GeneralName(GeneralName.dNSName, bool.toString());
+//                    names.add(temp);
+//                }
+//                GeneralName [] listToArray = new GeneralName[names.size()];
+//                names.toArray(listToArray);
+//                GeneralNames keyUsages = new GeneralNames(listToArray);
+//                
+//                certGen.addExtension(Extension.keyUsage, Constants.access.isCritical(2), keyUsages);
+//            }
             
-//        certGen.addExtension(X509Extensions.BasicConstraints, uiParams.isExtensionBasicConstraintsIsCritical(), basicConstraint);
-
+            //SUBJECT ALTERNATIVE NAMES
+            if (Constants.access.getAlternativeName(5).length > 0) {
+                List<GeneralName> names = new ArrayList();
+                for(String name: Constants.access.getAlternativeName(5)) {
+                  GeneralName altName = new GeneralName(GeneralName.dNSName, name);
+                  names.add(altName);
+                }
+                GeneralName [] listToArray = new GeneralName[names.size()];
+                names.toArray(listToArray);
+                GeneralNames subjectAltName = new GeneralNames(listToArray);
+                certGen.addExtension(Extension.subjectAlternativeName, Constants.access.isCritical(5), subjectAltName); 
+            }
+            
+            //Inhibit any policy        
+             if (Constants.access.getInhibitAnyPolicy()) {
+                InhibitAnyPolicyExtension inhibitAnyPolicyExtension = new InhibitAnyPolicyExtension(new Integer(Constants.access.getSkipCerts()));
+                certGen.addExtension(X509Extensions.InhibitAnyPolicy, Constants.access.isCritical(9), inhibitAnyPolicyExtension.getExtensionValue());
+             }
+            
             return certGen.generateX509Certificate(keyPair.getPrivate(), "BC");
         } catch (Exception ex) {
             Logger.getLogger(X509Helper.class.getName()).log(Level.SEVERE, null, ex);
@@ -349,10 +390,10 @@ public class X509Helper {
                 String s = ldaps.nextElement();
                 String[] strs = s.split("=");
                 switch(strs[0]) {
-                    case ("C"): Constants.access.setSubjectCountry(strs[1]); break;
+                    case ("C"):  Constants.access.setSubjectCountry(strs[1]); break;
                     case ("ST"): Constants.access.setSubjectState(strs[1]); break;
-                    case ("L"): Constants.access.setSubjectLocality(strs[1]); break;
-                    case ("O"): Constants.access.setSubjectOrganization(strs[1]); break;
+                    case ("L"):  Constants.access.setSubjectLocality(strs[1]); break;
+                    case ("O"):  Constants.access.setSubjectOrganization(strs[1]); break;
                     case ("OU"): Constants.access.setSubjectOrganizationUnit(strs[1]); break;
                     case ("CN"): Constants.access.setSubjectCommonName(strs[1]); break;                   
                 }
@@ -360,21 +401,55 @@ public class X509Helper {
             
             Constants.access.setVersion((certificate.getVersion())==3?2:1);
             Constants.access.setSerialNumber(certificate.getSerialNumber().toString());
+            Constants.access.setPublicKeyParameter(certificate.getPublicKey().toString());
             Constants.access.setNotBefore(certificate.getNotBefore());
             Constants.access.setNotAfter(certificate.getNotAfter());
             
             //EXTENSION FIELDS
             
+            //SUBJECT ALTERNATIVE NAME
+            Collection collection = certificate.getSubjectAlternativeNames();
+
+            if(collection != null) {
+                String subjectAlternativeNames = "";
+                int i = 0;
+                for (Iterator iterator = collection.iterator(); iterator.hasNext();) {  
+                    List<Object> nameTypePair = (List<Object>) iterator.next();   
+                    Integer typeOfAlternativeName = (Integer)nameTypePair.get(0);
+                    String alternativeName = (String) nameTypePair.get(1);
+                    subjectAlternativeNames += alternativeName;
+                    if(i<collection.size()-1) 
+                      subjectAlternativeNames += ",";
+                    i++;
+                }
+                Constants.access.setAlternativeName(5, subjectAlternativeNames);
+            }
+            
+            //KEY USAGE CRITICAL
+//            Constants.access.setKeyUsage(certificate.getKeyUsage());
+            
+            //Inhibit any policy
+            byte[] extVal = certificate.getExtensionValue(Extension.inhibitAnyPolicy.toString());
+            if (extVal != null) {
+              Object obj = new ASN1InputStream(extVal).readObject();
+              extVal = ((DEROctetString) obj).getOctets();
+              obj = new ASN1InputStream(extVal).readObject();
+              Constants.access.setInhibitAnyPolicy(true);
+              Constants.access.setSkipCerts(obj.toString());
+            }
+            
+            
+            
             //ISSUER FIELDS
             Principal issuerDN = certificate.getIssuerDN();
             String issuerString = issuerDN.toString().replace(" ", "");
-//            Constants.access.setIssuer(issuerString);
+            Constants.access.setIssuer(issuerString);
             Constants.access.setIssuerSignatureAlgorithm(certificate.getSigAlgName());
             
             return 0;
-        } catch (InvalidNameException ex) {
+        } catch (Exception ex) {
             Logger.getLogger(X509Helper.class.getName()).log(Level.SEVERE, null, ex);
-        }
+        } 
         return -1;
     }
 
