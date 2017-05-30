@@ -343,8 +343,6 @@ public class X509Helper {
             certGen.setPublicKey(keyPair.getPublic());
             certGen.setSignatureAlgorithm(Constants.access.getPublicKeySignatureAlgorithm());
             
-            //TODO:SET EXTENSIONS
-              
             //KEY USAGE
             if(Constants.access.isCritical(2)) {
                 
@@ -372,6 +370,9 @@ public class X509Helper {
                   GeneralName altName = new GeneralName(GeneralName.dNSName, name);
                   names.add(altName);
                 }
+                if (Constants.access.isCritical(5)) {
+                    names.add(new GeneralName(GeneralName.dNSName, "desibratemoj"));
+                }
                 GeneralName [] listToArray = new GeneralName[names.size()];
                 names.toArray(listToArray);
                 GeneralNames subjectAltName = new GeneralNames(listToArray);
@@ -381,7 +382,7 @@ public class X509Helper {
             //Inhibit any policy        
              if (Constants.access.getInhibitAnyPolicy()) {
                 InhibitAnyPolicyExtension inhibitAnyPolicyExtension = new InhibitAnyPolicyExtension(new Integer(Constants.access.getSkipCerts()));
-                certGen.addExtension(X509Extensions.InhibitAnyPolicy, Constants.access.isCritical(9), inhibitAnyPolicyExtension.getExtensionValue());
+                certGen.addExtension(X509Extensions.InhibitAnyPolicy, true, inhibitAnyPolicyExtension.getExtensionValue());
              }
             
             return certGen.generateX509Certificate(keyPair.getPrivate(), "BC");
@@ -436,15 +437,15 @@ public class X509Helper {
 
             if(collection != null) {
                 String subjectAlternativeNames = "";
-                int i = 0;
                 for (Iterator iterator = collection.iterator(); iterator.hasNext();) {  
                     List<Object> nameTypePair = (List<Object>) iterator.next();   
                     Integer typeOfAlternativeName = (Integer)nameTypePair.get(0);
                     String alternativeName = (String) nameTypePair.get(1);
-                    subjectAlternativeNames += alternativeName;
-                    if(i<collection.size()-1) 
-                      subjectAlternativeNames += ",";
-                    i++;
+                    if (!alternativeName.equals("desibratemoj")) {
+                        subjectAlternativeNames += alternativeName;
+                    } else {
+                        Constants.access.setCritical(5, true);
+                    }
                 }
                 Constants.access.setAlternativeName(5, subjectAlternativeNames);
             }
@@ -452,6 +453,7 @@ public class X509Helper {
             //KEY USAGE CRITICAL
             if (certificate.getKeyUsage() != null) {
                 Constants.access.setKeyUsage(certificate.getKeyUsage());
+                Constants.access.setCritical(2, true);
             }
             
             //Inhibit any policy
@@ -462,9 +464,8 @@ public class X509Helper {
               obj = new ASN1InputStream(extVal).readObject();
               Constants.access.setInhibitAnyPolicy(true);
               Constants.access.setSkipCerts(obj.toString());
+              Constants.access.setCritical(10, true);
             }
-            
-            
             
             //ISSUER FIELDS
             Principal issuerDN = certificate.getIssuerDN();
@@ -495,7 +496,58 @@ public class X509Helper {
         certGen.setPublicKey(keyPair.getPublic());
         certGen.setSignatureAlgorithm(subjectCert.getSigAlgName());
 
-     
+        //KEY USAGE
+        if(issuerCert.getKeyUsage() != null) {
+
+            boolean[] bools = issuerCert.getKeyUsage();
+            int temp = 0;
+
+            if (bools[0]) temp = temp | KeyUsage.digitalSignature;
+            if (bools[1]) temp = temp | KeyUsage.nonRepudiation;
+            if (bools[2]) temp = temp | KeyUsage.keyEncipherment;
+            if (bools[3]) temp = temp | KeyUsage.dataEncipherment;
+            if (bools[4]) temp = temp | KeyUsage.keyAgreement;
+            if (bools[5]) temp = temp | KeyUsage.keyCertSign;
+            if (bools[6]) temp = temp | KeyUsage.cRLSign;
+            if (bools[7]) temp = temp | KeyUsage.encipherOnly;
+            if (bools[8]) temp = temp | KeyUsage.decipherOnly;
+
+            KeyUsage keyUsage = new KeyUsage(temp);
+            certGen.addExtension(Extension.keyUsage, true, keyUsage);
+        }
+
+        //SUBJECT ALTERNATIVE NAMES
+        Collection collection = issuerCert.getSubjectAlternativeNames();
+        if(collection != null) {
+            List<GeneralName> names = new ArrayList();
+            boolean isCritical = false;
+            
+            for (Iterator iterator = collection.iterator(); iterator.hasNext();) {  
+                List<Object> nameTypePair = (List<Object>) iterator.next();   
+                Integer typeOfAlternativeName = (Integer)nameTypePair.get(0);
+                String alternativeName = (String) nameTypePair.get(1);
+                if (!alternativeName.equals("desibratemoj")) {
+                    GeneralName altName = new GeneralName(GeneralName.dNSName, alternativeName);
+                    names.add(altName);
+                } else {
+                    isCritical = true;
+                }
+            }
+            GeneralName [] listToArray = new GeneralName[names.size()];
+            names.toArray(listToArray);
+            GeneralNames subjectAltName = new GeneralNames(listToArray);
+            certGen.addExtension(Extension.subjectAlternativeName, isCritical, subjectAltName); 
+        }
+
+        //Inhibit any policy        
+        byte[] extVal = issuerCert.getExtensionValue(Extension.inhibitAnyPolicy.toString());
+        if (extVal != null) {
+            Object obj = new ASN1InputStream(extVal).readObject();
+            extVal = ((DEROctetString) obj).getOctets();
+            obj = new ASN1InputStream(extVal).readObject();
+            InhibitAnyPolicyExtension inhibitAnyPolicyExtension = new InhibitAnyPolicyExtension(new Integer(obj.toString()));
+            certGen.addExtension(X509Extensions.InhibitAnyPolicy, true, inhibitAnyPolicyExtension.getExtensionValue());
+        }
 
         return certGen.generateX509Certificate(keyPair.getPrivate(), "BC");
     }
