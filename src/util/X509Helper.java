@@ -218,6 +218,7 @@ public class X509Helper {
             keyStore.store(fileOutputStream, password.toCharArray());
             fileOutputStream.close();
             
+            return true;
         } catch (Exception ex) {
             Logger.getLogger(X509Helper.class.getName()).log(Level.SEVERE, null, ex);
         }
