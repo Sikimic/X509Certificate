@@ -71,6 +71,8 @@ import org.bouncycastle.crypto.util.PrivateKeyFactory;
 import org.bouncycastle.jce.PKCS10CertificationRequest;
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 import org.bouncycastle.operator.ContentSigner;
+import org.bouncycastle.operator.bc.BcDSAContentSignerBuilder;
+import org.bouncycastle.operator.bc.BcECContentSignerBuilder;
 import org.bouncycastle.operator.bc.BcRSAContentSignerBuilder;
 import org.bouncycastle.util.encoders.Base64;
 import org.bouncycastle.x509.X509V3CertificateGenerator;
@@ -258,7 +260,6 @@ public class X509Helper {
             ProtectionParameter protectionParameter = new KeyStore.PasswordProtection(Constants.keyStorePassword.toCharArray());
             PrivateKeyEntry privateKeyEntry = (PrivateKeyEntry) getKeyStoreInstance().getEntry(name, protectionParameter);
             X509Certificate certificate = (X509Certificate) privateKeyEntry.getCertificate();
-            
             return certificate.getSubjectDN().toString();
         } catch (KeyStoreException | NoSuchAlgorithmException | UnrecoverableEntryException ex) {
             Logger.getLogger(X509Helper.class.getName()).log(Level.SEVERE, null, ex);
@@ -296,7 +297,6 @@ public class X509Helper {
                 result.add(alias);
               }
           }
-          
           if(result.isEmpty()) return null;
           return result;
         } catch (Exception ex) {
@@ -487,20 +487,33 @@ public class X509Helper {
         X509Certificate issuerCert = (X509Certificate) issuerEntry.getCertificate();
         
         KeyPair keyPair = new KeyPair(subjectCert.getPublicKey(), issuerEntry.getPrivateKey());
+        
+        //new !
+        String issuerSignatureAlgorithm = (issuerCert.getPublicKey().getAlgorithm().contains("RSA")) ? "MD2withRSA" : issuerCert.getSigAlgName();
+        AlgorithmIdentifier sigAlgId = (new DefaultSignatureAlgorithmIdentifierFinder()).find(issuerSignatureAlgorithm);
+        AlgorithmIdentifier digAlgId = (new DefaultDigestAlgorithmIdentifierFinder()).find(sigAlgId);
 
-        X509V3CertificateGenerator certGen = new X509V3CertificateGenerator();
-        certGen.setSerialNumber(subjectCert.getSerialNumber());
-        certGen.setIssuerDN(new X500Principal(issuerCert.getSubjectDN().toString()));
-        certGen.setNotBefore(subjectCert.getNotBefore());
-        certGen.setNotAfter(subjectCert.getNotAfter());
-        certGen.setSubjectDN(new X500Principal(subjectCert.getSubjectDN().toString()));
-        certGen.setPublicKey(keyPair.getPublic());
-        certGen.setSignatureAlgorithm(subjectCert.getSigAlgName());
+        AsymmetricKeyParameter foo = PrivateKeyFactory.createKey(issuerEntry.getPrivateKey().getEncoded());
+        SubjectPublicKeyInfo keyInfo = SubjectPublicKeyInfo.getInstance(keyPair.getPublic().getEncoded());
 
+        
+        //in newer version of BC such as 1.51, this is 
+        PKCS10CertificationRequest pk10Holder = Constants.CSR;
+        X509v3CertificateBuilder certGenBuilder = new X509v3CertificateBuilder(new X500Name(issuerCert.getSubjectDN().toString()), subjectCert.getSerialNumber(), subjectCert.getNotBefore(), subjectCert.getNotAfter(), pk10Holder.getCertificationRequestInfo().getSubject(), keyInfo);
+
+        ContentSigner sigGen = null;
+        String alg = issuerCert.getPublicKey().getAlgorithm();
+        if((alg.contains("RSA"))||(alg.compareTo("RSA") == 0))
+          sigGen = new BcRSAContentSignerBuilder(sigAlgId, digAlgId).build(foo);
+        else if((alg.contains("DSA"))||(alg.compareTo("DSA") == 0)) 
+          sigGen = new BcDSAContentSignerBuilder(sigAlgId, digAlgId).build(foo);
+        else if((alg.contains("EC"))||(alg.compareTo("EC") == 0)) 
+          sigGen = new BcECContentSignerBuilder(sigAlgId, digAlgId).build(foo);
+        
         //KEY USAGE
-        if(issuerCert.getKeyUsage() != null) {
+        if(subjectCert.getKeyUsage() != null) {
 
-            boolean[] bools = issuerCert.getKeyUsage();
+            boolean[] bools = subjectCert.getKeyUsage();
             int temp = 0;
 
             if (bools[0]) temp = temp | KeyUsage.digitalSignature;
@@ -514,11 +527,11 @@ public class X509Helper {
             if (bools[8]) temp = temp | KeyUsage.decipherOnly;
 
             KeyUsage keyUsage = new KeyUsage(temp);
-            certGen.addExtension(Extension.keyUsage, true, keyUsage);
+            certGenBuilder.addExtension(Extension.keyUsage, true, keyUsage);
         }
 
         //SUBJECT ALTERNATIVE NAMES
-        Collection collection = issuerCert.getSubjectAlternativeNames();
+        Collection collection = subjectCert.getSubjectAlternativeNames();
         if(collection != null) {
             List<GeneralName> names = new ArrayList();
             boolean isCritical = false;
@@ -537,20 +550,28 @@ public class X509Helper {
             GeneralName [] listToArray = new GeneralName[names.size()];
             names.toArray(listToArray);
             GeneralNames subjectAltName = new GeneralNames(listToArray);
-            certGen.addExtension(Extension.subjectAlternativeName, isCritical, subjectAltName); 
+            certGenBuilder.addExtension(Extension.subjectAlternativeName, isCritical, subjectAltName); 
         }
 
         //Inhibit any policy        
-        byte[] extVal = issuerCert.getExtensionValue(Extension.inhibitAnyPolicy.toString());
+        byte[] extVal = subjectCert.getExtensionValue(Extension.inhibitAnyPolicy.toString());
         if (extVal != null) {
             Object obj = new ASN1InputStream(extVal).readObject();
             extVal = ((DEROctetString) obj).getOctets();
             obj = new ASN1InputStream(extVal).readObject();
             InhibitAnyPolicyExtension inhibitAnyPolicyExtension = new InhibitAnyPolicyExtension(new Integer(obj.toString()));
-            certGen.addExtension(X509Extensions.InhibitAnyPolicy, true, inhibitAnyPolicyExtension.getExtensionValue());
+            certGenBuilder.addExtension(X509Extensions.InhibitAnyPolicy, true, inhibitAnyPolicyExtension.getExtensionValue());
         }
+        
+        org.bouncycastle.asn1.x509.Certificate eeX509CertificateStructure = certGenBuilder.build(sigGen).toASN1Structure(); 
 
-        return certGen.generateX509Certificate(keyPair.getPrivate(), "BC");
+        CertificateFactory cf = CertificateFactory.getInstance("X.509", "BC");
+
+        // Read Certificate
+        InputStream is1 = new ByteArrayInputStream(eeX509CertificateStructure.getEncoded());
+        X509Certificate cert = (X509Certificate) cf.generateCertificate(is1);
+        is1.close();
+        return cert;
     }
     
 }
