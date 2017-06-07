@@ -11,10 +11,14 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.math.BigInteger;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.security.InvalidKeyException;
 import java.security.Key;
 import java.security.KeyPair;
@@ -52,6 +56,7 @@ import javax.security.auth.x500.X500Principal;
 import org.bouncycastle.asn1.ASN1Encodable;
 import org.bouncycastle.asn1.ASN1InputStream;
 import org.bouncycastle.asn1.DEROctetString;
+import org.bouncycastle.asn1.DEROutputStream;
 import org.bouncycastle.asn1.x500.X500Name;
 import org.bouncycastle.asn1.x509.AlgorithmIdentifier;
 import org.bouncycastle.asn1.x509.AuthorityKeyIdentifier;
@@ -75,6 +80,8 @@ import org.bouncycastle.operator.bc.BcDSAContentSignerBuilder;
 import org.bouncycastle.operator.bc.BcECContentSignerBuilder;
 import org.bouncycastle.operator.bc.BcRSAContentSignerBuilder;
 import org.bouncycastle.util.encoders.Base64;
+import org.bouncycastle.util.io.pem.PemObject;
+import org.bouncycastle.util.io.pem.PemWriter;
 import org.bouncycastle.x509.X509V3CertificateGenerator;
 import sun.security.x509.InhibitAnyPolicyExtension;
 import sun.security.x509.KeyUsageExtension;
@@ -248,10 +255,51 @@ public class X509Helper {
     }
     
     public boolean importCertificate(File file, String string) {
+        try {
+            Path fileLocation = Paths.get(file.getAbsolutePath());
+            byte[] data = Files.readAllBytes(fileLocation);
+            ByteArrayInputStream bIn = new ByteArrayInputStream(data);
+
+            X509Certificate cert = (X509Certificate) CertificateFactory.getInstance("X.509").generateCertificate(bIn);
+            KeyPairGenerator keyGen = KeyPairGenerator.getInstance("RSA");
+            getKeyStoreInstance().setKeyEntry(string, keyGen.genKeyPair().getPrivate(), Constants.keyStorePassword.toCharArray(), new Certificate[]{cert});
+            return true;
+        } catch (Exception ex) {
+            Logger.getLogger(X509Helper.class.getName()).log(Level.SEVERE, null, ex);
+        }
         return false;
     }
     
     public boolean exportCertificate(File file, int i) {
+        try {
+            ProtectionParameter pp = new KeyStore.PasswordProtection(Constants.keyStorePassword.toCharArray());
+            PrivateKeyEntry entry = (PrivateKeyEntry) getKeyStoreInstance().getEntry(Constants.selectedKeyPair, pp);
+            X509Certificate certificate = (X509Certificate) entry.getCertificate();
+
+            File certFile = new File(file.getAbsolutePath()+".cer");
+
+            if(i==0) {
+                //DER
+                FileOutputStream os = new FileOutputStream(certFile);
+                DEROutputStream dos = new DEROutputStream(os);
+                ASN1InputStream aIn = new ASN1InputStream(new ByteArrayInputStream(certificate.getEncoded()));
+
+                dos.writeObject(aIn.readObject());
+                dos.flush();
+                dos.close();
+            } else {
+                //PEM
+                FileWriter writer = new FileWriter(certFile);
+                PemWriter pem = new PemWriter(writer);
+                PemObject pog = new PemObject(certificate.getType(), certificate.getEncoded());
+                pem.writeObject(pog);
+                pem.flush();
+                pem.close();
+            }
+          return true;
+        } catch (Exception ex) {
+          Logger.getLogger(X509Helper.class.getName()).log(Level.SEVERE, null, ex);
+        }
         return false;
     }
     
